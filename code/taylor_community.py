@@ -74,10 +74,7 @@ def generate_parameters(source):
     return(a_vec, b_vec)
 
 def comm_function(C, abundances):
-    try:
-        fun = np.sum((C.T*abundances).T, axis = 0)
-    except:
-        import ipdb; ipdb.set_trace(context = 20)
+    fun = np.sum((C.T*abundances).T, axis = 0)
     return fun
 
 def randbin(n, m, count):
@@ -108,6 +105,17 @@ def mom_estimator(mu_s, sig_s):
 
 def optimal_abundances(C, r):
     return np.linalg.inv(C @ C.T) @ C @ r 
+
+def ssq_opt_abund(A, v):
+    ''' 
+    Given a target vector v, and a basis matrix A, obtain the sum of squares
+    of the optimal solution
+    '''
+    #get singular value decomposition
+    U, S, V = np.linalg.svd(A, full_matrices=False)
+    m = len(v)
+    v_T = v.reshape(m, 1)
+    return v@(np.identity(m) - U@U.T)@v_T
 
 def vec_enlarge(vector, dimension, indices):
     '''
@@ -140,8 +148,9 @@ def main(argv):
     #preallocate dataframe for storing results
     epsilon = 0.01
     col_names = ['sim', 'a', 'b', 'mean', 'variance', 'N', 'n', 
-                 'distance_comm', 'distance_supply', 'spp_name', 'ab_original',
-                 'ab_optimal', 'ab_subcomm']
+                 'distance_assembly', 'distance_optimal', 'distance_naive', 
+                 'spp_name', 'ab_original', 'ab_optimal', 'ab_subcomm', 
+                 'ab_naive']
     col_names = col_names + ['r'+str(i+1)  for i in range(m)]
     df = pd.DataFrame(columns = col_names)
     it = 0
@@ -194,19 +203,19 @@ def main(argv):
                 #let assembly determine this abundances, and then select the 
                 #best one. 
                 n_spp_j = j + 1
-                #select subcommunities with j species
+                #select all subcommunities with j species
                 ind = np.where(n_spp == n_spp_j)[0]
                 sub_comms = vec[ind, :]
                 n_sub = math.comb(glv_community.richness, n_spp_j)
                 #preallocate vector of distances
-                dist_comm = np.inf
+                dist_assem = np.inf
                 for sub in range(n_sub):
                     #get indices of species to be removed
                     try:
                         ind_rem = np.where(sub_comms[sub,:] == 0)[0]
                     except:
                         import ipdb; ipdb.set_trace(context = 20)
-                    #instantiate all subcommunities
+                    #form subcommunity
                     glv_sub_comm = glv_community.remove_spp(ind_rem)
                     #assembly the subcommunity
                     glv_sub_comm.assembly()
@@ -219,41 +228,51 @@ def main(argv):
                         C_sub = C_ext[glv_sub_comm.presence, :]
                         #measure function
                         f_sub = comm_function(C_sub, abundances)
-                        #calculate distance with function of original comm 
-                        dist_comm_cand = spatial.distance.cosine(f_sub, f)
-                        if dist_comm_cand < dist_comm: 
+                        #get error between original funct and sub-comm funct
+                        error = f - f_sub
+                        #calculate sum of squares of error
+                        dist_assem_cand = np.dot(error, error)
+                        if dist_assem_cand < dist_assem: 
                             #assign new best distance
-                            dist_comm = dist_comm_cand
-                            #record distance to resource supply vector
-                            dist_supply = spatial.distance.cosine(f, r)
-                            #compute optimal abundances to match supply
-                            ab_opt = optimal_abundances(C_sub, r)
-                            #complete vector of abundances of subcommunity for
-                            #later storage
+                            dist_assem = dist_assem_cand
+                            #record abundances pre-assembly
+                            ab_bare = glv_community.n
+                            ab_bare[np.where(glv_sub_comm.presence==0)[0]] = 0
+                            #get function of bare abundances 
+                            f_bare = comm_function(C_sub, ab_bare)
+                            #calculate error with original one
+                            error_bare = f - f_bare
+                            #get sum of squares of error
+                            dist_bare = np.dot(error_bare, error_bare)
+                            #compute abundances througg OLS
+                            ab_opt = optimal_abundances(C_sub, f)
+                            #compute the sum square of the residuals 
+                            dist_opt = ssq_opt_abundances(C_sub.T, f)
+                            #complete vector of bare, assembly, and optimal 
+                            #abundances of subcommunity with the removed 
+                            #species for later storage
                             ab_sub = vec_enlarge(abundances,
                                                  glv_community.richness,
                                                  glv_sub_comm.presence)
-                            #complete vector of optimal abundances
                             ab_optim = vec_enlarge(ab_opt, 
                                                    glv_community.richness,
                                                    glv_sub_comm.presence) 
-                            if n_spp_j == 1:
-                                corr = 0
+                            ab_bare = vec_enlarge(ab_bare,
+                                                  glv_community.richness,
+                                                  glv_sub_comm.presence)
                             sys.stdout.write("\033[K")
                             print('Running simulation', sim, 
                                   'for a = ', a, ', b = ', b, ', N = ', 
                                   glv_community.richness, ', n = ', n_spp_j, 
-                                  'and distance = %.3f' % dist_comm, 
+                                  'and distance = %.3f' % dist_assem, 
                                   'checked: ', sub, '/',n_sub, end = '\n')
                             sys.stdout.write("\033[K")
-                            if dist_comm < epsilon:
-                                break
                     else: 
                         #skip iteration when there are extinctions
                         continue
                 vec_store = np.array([sim, a, b, mean, var, 
                                       glv_community.richness, n_spp_j, 
-                                      dist_comm, dist_supply, corr])
+                                      dist_assem, dist_opt, dist_bare])
                 #replicate to store species-specific information in long format
                 mat_store = np.tile(vec_store, 
                                     glv_community.richness).reshape(glv_community.richness, 10)
@@ -262,21 +281,19 @@ def main(argv):
                               range(mat_store.shape[1])}
                 #add species-specific columns
                 #add species name
-                dict_store['spp_name'] = ['spp'+str(i+1) for i in range(glv_community.richness)]
+                dict_store['spp_name'] = ['spp'+str(i+1) \
+                                          for i in \
+                                          range(glv_community.richness)]
                 dict_store['ab_original'] = list(glv_community.n)
                 dict_store['ab_optimal'] = ab_optim
                 dict_store['ab_subcomm'] = ab_sub
+                dict_store['ab_naive'] = ab_bare
                 for i in range(m):
                     dict_store['r'+str(i+1)] = list(C_ext[:, i])
-                #4. Record the error between full community function and best 
-                #   n-subcommunity function as n increases
                 df_append = pd.DataFrame(dict_store)
                 df = pd.concat([df, df_append], axis=0)
                 #update index of dataframe
                 it += 1
-                #stop searching when communities have the same function
-                if dist_comm < epsilon:
-                    break
         sim += 1
     df.to_csv('../data/taylor_results.csv')
     return 0
