@@ -7,15 +7,12 @@ __version__ = '0.0.1'
 ## IMPORTS ##
 
 import sys
-from community import *
-from integration import *
-from models import *
+from essential_tools import *
 import numpy as np
 import pandas as pd
 from scipy.stats import beta
 from itertools import combinations
 import math
-import copy
 from scipy import spatial
 
 ## CONSTANTS ##
@@ -73,9 +70,6 @@ def generate_parameters(source):
         b_vec[i] = source[ind_loop[1][i]]
     return(a_vec, b_vec)
 
-def comm_function(C, abundances):
-    fun = np.sum((C.T*abundances).T, axis = 0)
-    return fun
 
 def randbin(n, m, count):
     '''
@@ -98,13 +92,13 @@ def randbin(n, m, count):
     result[row_ind, col_ind] = 1
     return result
 
-def mom_estimator(mu_s, sig_s):
-    alpha = mu_s*(mu_s*(1-mu_s)/sig_s-1)
-    beta = (1-mu_s)*(mu_s*(1-mu_s)/sig_s-1)
-    return (alpha, beta)
+def optimal_abundances(C_k, C, x):
+    x = x.reshape(len(x), 1)
+    return (np.linalg.inv(C_k @ C_k.T) @ C_k @ C.T @ x).T[0]
 
-def optimal_abundances(C, r):
-    return np.linalg.inv(C @ C.T) @ C @ r 
+def comm_function(C, abundances):
+    x = abundances.reshape(len(abundances), 1)
+    return (C.T@x).T[0]
 
 def ssq_opt_abund(A, v):
     ''' 
@@ -115,7 +109,7 @@ def ssq_opt_abund(A, v):
     U, S, V = np.linalg.svd(A, full_matrices=False)
     m = len(v)
     v_T = v.reshape(m, 1)
-    return v@(np.identity(m) - U@U.T)@v_T
+    return float(v@(np.identity(m) - U@U.T)@v_T)
 
 def vec_enlarge(vector, dimension, indices):
     '''
@@ -137,12 +131,14 @@ def main(argv):
     different results
     '''
     #set parameters
-    n, m = (30, 30)
+    n, m = (20, 20)
     #generate values of a and b for the beta distribution
     #a_source = np.array([0.5, 1, 5])
     #a_vec, b_vec = generate_parameters(a_source)
-    a_vec = np.array([0.5, 1, 5, 0.6, 1])
-    b_vec = np.array([0.5, 1, 5, 1, 0.6])
+    #a_vec = np.array([0.5, 1, 5, 0.6, 1])
+    #b_vec = np.array([0.5, 1, 5, 1, 0.6])
+    a_vec = np.array([1])
+    b_vec = np.array([1])
     n_ros = len(a_vec)
     #threshold below which consider that two communities have the same functon
     #preallocate dataframe for storing results
@@ -223,7 +219,7 @@ def main(argv):
                     #assembly
                     if glv_sub_comm.richness == n_spp_j: 
                         #get abundances
-                        abundances = glv_sub_comm.n
+                        abundances = np.array(glv_sub_comm.n)
                         #remove preferences from extinct species
                         C_sub = C_ext[glv_sub_comm.presence, :]
                         #measure function
@@ -236,8 +232,7 @@ def main(argv):
                             #assign new best distance
                             dist_assem = dist_assem_cand
                             #record abundances pre-assembly
-                            ab_bare = glv_community.n
-                            ab_bare[np.where(glv_sub_comm.presence==0)[0]] = 0
+                            ab_bare = glv_community.n[glv_sub_comm.presence]
                             #get function of bare abundances 
                             f_bare = comm_function(C_sub, ab_bare)
                             #calculate error with original one
@@ -245,9 +240,10 @@ def main(argv):
                             #get sum of squares of error
                             dist_bare = np.dot(error_bare, error_bare)
                             #compute abundances througg OLS
-                            ab_opt = optimal_abundances(C_sub, f)
+                            ab_opt = optimal_abundances(C_sub, C_ext, 
+                                                        glv_community.n)
                             #compute the sum square of the residuals 
-                            dist_opt = ssq_opt_abundances(C_sub.T, f)
+                            dist_opt = ssq_opt_abund(C_sub.T, f)
                             #complete vector of bare, assembly, and optimal 
                             #abundances of subcommunity with the removed 
                             #species for later storage
