@@ -35,7 +35,8 @@ def CR_crossfeeding(t, x, C, D, r, d, l, tol):
 ###############################################################################
 #CLASSES
 class Community:
-    def __init__(self, n, A, C, D, r, d, l, model):
+    def __init__(self, n, model, A=None, C=None, D=None, r=None, rho=None, 
+                 d=None, l=None):
         self.n = n #abundance vector
         self.A = A #competition matrix
         self.C = C #resource preferences matrix
@@ -65,7 +66,10 @@ class Community:
             if any(ind_ext):
                 n_eq[ind_ext] = 0
             self.n = n_eq
-            self.presence[ind_ext] = False
+            try:
+                self.presence[ind_ext] = False
+            except:
+                import ipdb; ipdb.set_trace(context = 20)
             self.richness -= len(ind_ext) #update richness 
         elif self.model.__name__ == 'CR_crossfeeding':
             #numerically integrate differential equations
