@@ -1,8 +1,10 @@
 library(tidyverse)
 library(viridis)
 library(RColorBrewer)
+require(magrittr)
 
-  setwd("~/Desktop/coursework/QME/QME_final_project/code/")
+
+setwd("~/Desktop/coursework/QME/QME_final_project/code/")
 data = read.csv('../data/taylor_crossfeeding_results.csv')
 data = read.csv('../data/cluster_results.csv')
 data = read.csv('../data/cluster_results_try2.csv')
@@ -216,5 +218,196 @@ ggsave('../data/average_abundance_correlation.pdf', width = 5.2, height = 10)
 #otherwise not. Read philip and alesina paper on the ghost of nestedness in 
 #nature communications.
 
+build_B = function(vec, N){
+  #get size of the vector
+  dim = length(vec)
+  #Partition the vector of presence absence it in rows of length N
+  #vec_mat = matrix(vec, nrow = N, byrow = T)
+  #Preallocate matrix B
+  B = matrix(0, N, dim)
+  for (i in seq(N)){
+    for (k in seq(N-1)){
+      #In row i, I can only modify the elements in columns of the form
+      j = i + N*(k - 1)
+      #If row k has a 1 in element i, then B[i, j] = 1
+      vec_slice = vec[(N*(k-1)+1):(N*k)]
+      if (vec_slice[i] == 1){
+        B[i, j] = 1
+      }
+    }
+  }
+  return(B)
+}
+
+#Function to build adjacency matrix given abundance data.
+build_adj_mat = function(B){
+  dim = ncol(B)
+  #Construct adjacency matrix of a bipartite network
+  A = matrix(0, N + dim, N + dim)
+  A[1:N, (N+1):(dim+N)] = B
+  A[(N+1):(dim+N), 1:N] = t(B)
+  return(A)
+}
+
+## See:
+## Strona, Giovanni, et al. "A fast and unbiased procedure to randomize
+##     ecological binary matrices with fixed row and column totals." Nature
+##     communications 5 (2014): 4114.
+## Carstens, Corrie J. "Proof of uniform sampling of binary matrices with fixed
+##     row sums and column sums for the fast curveball algorithm." Physical
+##     Review E 91.4 (2015): 042812.
+## Carstens, Corrie Jacobien, Annabell Berger, and Giovanni Strona. "Curveball:
+##     a new generation of sampling algorithms for graphs with fixed degree
+##     sequence." arXiv preprint arXiv:1609.05137 (2016).
+
+my_sample <- function(x, size, replace=FALSE, prob=NULL) {
+  if (missing(size)) size <- length(x)
+  x[sample.int(length(x), size, replace, prob)]
+}
+
+
+## curve ball algorithm code slightly modified from:
+## https://github.com/queenBNE/Curveball/blob/master/goodshuffle.R
+## input: incidence matrix: an nxm matrix representing one of the symmetric off-
+## diagonal blocks of an adjacency matrix of a bipartite graph
+## and a multiplier for the number of swaps to conduct in randomizing
+# curve_ball <- function(incidence_matrix, rep_multiplier){
+#   n_rows <- dim(incidence_matrix)[1]
+#   n_cols <- dim(incidence_matrix)[2]
+#   # convert the incidence matrix to an adjacency list
+#   adjacency_list <- lapply(1:n_rows,
+#                            function(row) which(incidence_matrix[row,] == 1))
+#   
+#   for (rep in 1:(rep_multiplier * n_rows)){
+#     # pick two rows to participate in the trade
+#     participants <- my_sample(1:n_rows, 2)
+#     # and get each of their links
+#     a <- adjacency_list[[participants[1]]]
+#     b <- adjacency_list[[participants[2]]]
+#     # find which links they have in common
+#     shared_links <- intersect(a,b)
+#     # if a and b are not proper subsets
+#     if (length(shared_links) %>% is_in(c(length(a), length(b))) %>% not()) {
+#       # get the elements that are different between a and b (potential trades)
+#       diff_links <- setdiff(c(a,b), shared_links)
+#       # get the break point between a and b when concatenated
+#       L <- length(a) - length(shared_links)
+#       # initialize the replacement link vectors
+#       new_a <- a
+#       new_b <- b
+#       # only move on once a substantive trade has occurred
+#       while (setequal(new_a, a)) {
+#         # scramble the potential trades 
+#         diff_links <- my_sample(diff_links)
+#         # and distribute them between the new vectors
+#         new_a <- c(shared_links, diff_links[1:L])
+#         new_b <- c(shared_links, diff_links[(L+1):length(diff_links)])
+#       }
+#       adjacency_list[[participants[1]]] <- new_a
+#       adjacency_list[[participants[2]]] <- new_b
+#     }
+#   }
+#   randomized_matrix <- matrix(0, n_rows, n_cols)
+#   lapply(1:n_rows,
+#          function(row) randomized_matrix[row, adjacency_list[[row]]] <<- 1)
+#   return(randomized_matrix)
+# }
+
+#Get data of binary abundances for each subcommunity.
+presence_absence_min <- data_comb %>% 
+  select(c(1, 2, 7, 8, 9, 10, 13, 14, 16)) %>% 
+  group_by(sim, N, n, leakage) %>% 
+  slice_min(distance_assembly) %>%
+  filter(N==6) %>% 
+  ungroup(n) %>% 
+  group_split()
   
+presence_absence_max <- data_comb %>% 
+  select(c(1, 2, 7, 8, 9, 10, 13, 14, 16)) %>% 
+  group_by(sim, N, n, leakage) %>% 
+  slice_max(distance_assembly) %>%
+  filter(N==6) %>% 
+  ungroup(n) %>% 
+  group_split()
+
+# #split dataframe into groups
+# presence_absence_split <- data_comb %>% 
+#   select(c(1, 2, 7, 8, 9, 10, 13, 14, 16)) %>% 
+#   group_by(sim, N, n, leakage, distance_assembly) %>% 
+#   filter(ab_subcomm != 0, N==6) %>%
+#   group_split()
+# 
+# #get number of groups
+# n_groups = length(presence_absence_split)
+# #Initialize dataframe to store each sample
+# presence_absence_rand_bind = data_comb %>% 
+#   select(c(1, 2, 7, 8, 9, 10, 13, 14, 16)) %>%
+#   filter(N == Inf)
+# 
+# #sample n elements from each group
+# for (i in seq(n_groups)){
+#   #sample n samples from each group
+#   n_samp = unique(presence_absence_split[[i]]$N)
+#   sample_i = presence_absence_split[[i]] %>% 
+#     slice_sample(n = n_samp, replace = FALSE)
+#   presence_absence_rand_bind = rbind(presence_absence_rand_bind, sample_i)
+# }
+# 
+# presence_absence_rand <- presence_absence_rand_bind %>% 
+#   group_by(sim, N, leakage) %>% 
+#   group_split()
+
+
+#For each group, get construct the adjacency matrix
+data_i_min = presence_absence_min[[i]] %>% 
+  ungroup() %>% 
+  mutate(X_sub = as.numeric(ab_subcomm != 0))
+
+data_i_max = presence_absence_max[[i]] %>% 
+  ungroup() %>% 
+  mutate(X_sub = as.numeric(ab_subcomm != 0))
+
+# data_i = presence_absence %>% 
+#   ungroup() %>% 
+#   mutate(X_sub = as.numeric(ab_subcomm != 0))
+  
+presence_vec_min = data_i_min$X_sub
+presence_vec_max = data_i_max$X_sub
+N = unique(data_i_min$N)
+#erase vector of full community
+if (all(tail(presence_vec, N) == 1)){
+  presence_vec_min = head(presence_vec_min, length(presence_vec_min)-N)
+  presence_vec_max = head(presence_vec_max, length(presence_vec_max)-N)
+  
+}
+
+B_min = build_B(presence_vec_min, N)
+A_min = build_adj_mat(B_min)
+B_max = build_B(presence_vec_max, N)
+A_max = build_adj_mat(B_max)
+
+#Calculate dominating eigenvalue
+max_eig_min = max(eigen(A_min, only.values = TRUE)$values)
+max_eig_max = max(eigen(A_max, only.values = TRUE)$values)
+
+#Randomize network by randomly sampling species in the subcommunities.
+#That is, randomizing each row of presence_vec 
+
+#Get value of nestedness for the set simulations of N-species that maximize the
+#distance of function
+
+#Get value of nestedness for simulations of N-species communities where the 
+#subcommunity is picked at random.
+
+#Randomize network using curveball algorithm.
+# n_randomizations = 10
+# rand_eig_vec = rep(0, n_randomizations)
+# for (j in seq(n_randomizations)){
+#   B_rand = curve_ball(B, 100)
+#   A_rand = build_adj_mat(B_rand)
+#   rand_eig_vec[j] = max(eigen(A_rand, only.values = TRUE)$values)
+# }
+
+#Calculate p-value
+pval_vec[i] = sum(rand_eig_vec > max_eig)/n_randomizations
 
